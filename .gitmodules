@@ -46,3 +46,12 @@
 [submodule "boards/arduino-mega"]
 	path = boards/arduino-mega
 	url = https://github.com/cmmakerclub/arduino-mega-board/
+[submodule "packages/kbide-extension-pack"]
+	path = packages/kbide-extension-pack
+	url = https://github.com/cmmc-kbide/kbide-extension-pack
+[submodule "boards/openkb"]
+	path = boards/openkb
+	url = https://github.com/MakerAsia/openkb
+[submodule "boards/kbm5stack"]
+	path = boards/kbm5stack
+	url = https://github.com/MakerAsia/kbm5stack

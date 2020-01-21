@@ -1,6 +1,9 @@
 module.exports = {
   runtimeCompiler: true,
   configureWebpack: {
+    optimization: {
+
+    },
     externals: {
       vue: "Vue",
     },

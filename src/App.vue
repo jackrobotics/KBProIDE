@@ -2,7 +2,7 @@
     <div id="appRoot">
         <template v-if="!$route.meta.public">
             <v-app class="app" id="inspire">
-                <app-toolbar class="app--toolbar"></app-toolbar>
+                <app-toolbar ref="toolbar" class="app--toolbar" v-on:created="createToolbar"></app-toolbar>
                 <v-content>
                     <!-- Page Header -->
                     <div class="page-wrapper">
@@ -55,7 +55,7 @@
 
                             <!--lower pane -->
                             <div class="bottom-tab" v-if="$global.ui.bottomTab.length > 0">
-                                <v-tabs color="primary" dark slider-color="yellow" v-model="bottomTabModel">
+                                <v-tabs color="primary" dark slider-color="yellow" v-model="$global.ui.bottomTabModel">
                                     <draggable :options="{group: 'tab-group'}" class="v-tabs__container"
                                                v-model="$global.ui.bottomTab">
                                         <!-- tab header -->
@@ -170,35 +170,34 @@
 </template>
 <script>
   import Vue from "vue";
-  import AppToolbar from "@/engine/views/AppToolbar";
-  import AppFooter from "@/engine/views/AppFooter";
-  import {Multipane, MultipaneResizer} from "vue-multipane";
-  import draggable from "vuedraggable";
-
-  const electron = require("electron");
   //========= load manager ==========//
   import bm from "@/engine/BoardManager";
-  import AsyncComponent from "@/engine/AsyncComponent";
+  import pm from "@/engine/PackageManager";
+  //import AsyncComponent from "@/engine/AsyncComponent";
   import AppEvents from "./event";
   import util from "@/engine/utils";
-  import {stat} from "fs";
-  import {spread} from "q";
+  import TourSteps from "./tour";
+  //import AppToolbar from "@/engine/views/AppToolbar";
+  //import AppFooter from "@/engine/views/AppFooter";
+  //import {Multipane, MultipaneResizer} from "vue-multipane";
+  //import draggable from "vuedraggable";
+  const electron = require("electron");
+  const {Menu, MenuItem, globalShortcut} = require("electron").remote;
   //========= updating =========//
   import AppUpdater from "@/engine/updater/AppUpdater";
-
-  import TourSteps from "./tour";
 
   require("vue-tour/dist/vue-tour.css");
 
   export default {
     components: {
-      AppToolbar,
-      Multipane,
-      draggable,
-      MultipaneResizer,
-      AsyncComponent,
-      AppFooter,
+      AppToolbar : ()=> import("@/engine/views/AppToolbar"),
+      Multipane : ()=> import("vue-multipane").then(({Multipane})=> Multipane),
+      MultipaneResizer : ()=> import("vue-multipane").then(({MultipaneResizer})=>MultipaneResizer),
+      draggable : ()=> import("vuedraggable"),
+      AsyncComponent : () => import("@/engine/AsyncComponent"),
+      AppFooter : ()=> import("@/engine/views/AppFooter"),
       AppUpdater
+      //AppUpdater : () => import("@/engine/updater/AppUpdater")
     },
     data() {
       return {
@@ -223,7 +222,7 @@
     mounted: function() {
 
     },
-    created() {
+    async created() {
       AppEvents.forEach(item => {
         this.$on(item.name, item.callback);
       });
@@ -231,11 +230,10 @@
       //======== INIT ========//
       //----- load color -----//
       this.$vuetify.theme.primary = this.$global.setting.color;
-      //----- load external plugin -----//
-      this.reloadBoardPackage();
-      this.$global.$on("board-change", this.reloadBoardPackage);
+      this.$global.$on("board-change",await this.renderComponents);
       //----- check for update -----//
       this.$global.$on("check-update", this.checkUpdate);
+      this.$global.$on("render-packages", await this.renderComponents);
       electron.ipcRenderer.on("file-board-folder", () => {
         electron.shell.openItem(util.boardDir);
       });
@@ -243,7 +241,7 @@
         electron.shell.openItem(util.platformDir);
       });
       electron.ipcRenderer.on("file-plugin-folder", () => {
-        electron.shell.openItem(util.boardDir + "/" + window.getApp.$global.board.board + "/plugin");
+        electron.shell.openItem(util.pluginDir);
       });
       electron.ipcRenderer.on("help-tour", () => {
         this.$global.setting.firstUse = true;
@@ -261,40 +259,137 @@
       closeTab(name) {
         this.$global.ui.removeAllTab(name);
       },
-      reloadBoardPackage() {
-        var boardName = this.$global.board.board;
-        var boardPackage = bm.packages(boardName);
-        console.log("--------- bp ---------");
-        console.log(boardPackage);
+      initialTab(){
 
-        var bp = {};
-        // re-assign package to board
-        Object.keys(boardPackage).forEach(packageName => {
-          bp[packageName] = {};
-          let boardPackageData = util.loadCofigComponents(boardPackage[packageName].config,
-            "board.package." + packageName);
-          bp[packageName] = boardPackageData.data;
-        });
-
-        Object.keys(boardPackage).forEach((packageName, index, arr) => {
-          let targetJsFile = boardPackage[packageName].js;
-          let targetLinkFile = `file:///${targetJsFile}`;
-          if (util.fs.existsSync(targetJsFile)) {
-            let script = document.createElement("script");
-            script.setAttribute("src", targetLinkFile);
-            script.onload = function() {
-              if (packageName in window) {
-                Vue.use(window[packageName]);
-                bp[packageName].loaded = true;
-                console.log(`board [${boardName}] loaded package : ${packageName}`);
-                if (index === arr.length - 1) {
-                  Vue.prototype.$global.board.package = bp;
+      },
+      renderComponents : async function(){
+        await this.createToolbar(window.getApp.$refs.toolbar);
+      },
+      createToolbar : async function(t)
+      {
+        console.log("toolbar created");
+        setTimeout(()=>{
+          if(window.getApp) {
+            window.getApp.$refs.toolbar.processStaticToolbar(t);
+            //----- load external plugin -----//
+            window.getApp.reloadBoardPackage().then(() => {
+              window.getApp.$refs.toolbar.processToolbar(t);
+            });
+            //----- load app packages ----//
+            window.getApp.loadAppPackage().then(() => {
+              window.getApp.$refs.toolbar.processAppToolbar(t);
+            });
+          }
+        },1000);
+      },
+      buildPackageMenu : async function(packages){
+        if(Menu === undefined){
+          return;
+        }
+        let menu = Menu.getApplicationMenu(); // get electron menu
+        for(let package_key in packages){
+          let pack = packages[package_key];
+          if(pack.config && pack.config.menu){
+            let pack_menu = pack.config.menu;
+            for(let pack_menu_item_key in pack_menu){
+              let pack_menu_item = pack_menu[pack_menu_item_key];
+              let target_menu = menu.items.find(item=>item.label === pack_menu_item.main);
+              if(target_menu == null){ //new main menu, let create main menu first
+                let main_menu = new MenuItem({label : pack_menu_item.main, submenu : []});
+                if(pack_menu_item.main_index){
+                  menu.insert(pack_menu_item.main_index,main_menu);
+                }else{
+                  menu.append(main_menu);
+                }
+                Menu.setApplicationMenu(menu);
+                target_menu = menu.items.find(item=>item.label === pack_menu_item.main);
+              }
+              if(target_menu){
+                pack_menu_item.click = () => Vue.prototype.$global.$emit(pack_menu_item.event_emit);
+                globalShortcut.unregister(pack_menu_item.accelerator);
+                globalShortcut.register(pack_menu_item.accelerator, () => {
+                  console.log("Emiting event...");
+                  Vue.prototype.$global.$emit(pack_menu_item.event_emit);
+                });
+                let item = new MenuItem(pack_menu_item);
+                let target_submenu = target_menu.submenu.items.find(item=>item.label === pack_menu_item.label);
+                if(target_submenu){ //existing, new i cannot remove it so let camouflage it.
+                  let old_submenu = target_menu.submenu.items.splice(0); //Shallow copy, aka clone;
+                  let new_submenu = old_submenu.filter(item=>item.label !== pack_menu_item.label);
+                  new_submenu.push(item);
+                  target_menu.submenu.clear(); // this didn't link to items
+                  target_menu.submenu.items = [];
+                  for(let item in new_submenu){
+                    target_menu.submenu.append(new_submenu[item]); //this linked to items , wtf electron?
+                  }
+                }else {
+                  target_menu.submenu.append(item);
                 }
               }
-            };
-            document.head.appendChild(script);
+            }
           }
+        }
+      },
+      loadPackage : async function(packageInfo){
+        return new Promise((resolve,reject)=>{
+          let bp = {};
+          // re-assign package to board
+          Object.keys(packageInfo).forEach(packageName => {
+            bp[packageName] = {};
+            let boardPackageData = util.loadCofigComponents(packageInfo[packageName].config,
+              "package." + packageName);
+            bp[packageName] = boardPackageData.data;
+          });
+
+          Object.keys(packageInfo).forEach((packageName, index, arr) => {
+            let targetJsFile = packageInfo[packageName].js;
+            let targetCssFile = packageInfo[packageName].css;
+            let targetLinkFile = `file:///${targetJsFile}`;
+            let targetLinkCssFile = `file:///${targetCssFile}`;
+            if (util.fs.existsSync(targetJsFile)) {
+              let script = document.createElement("script");
+              script.setAttribute("src", targetLinkFile);
+              script.onload = function() {
+                if (packageName in window) {
+                  Vue.use(window[packageName]);
+                  bp[packageName].loaded = true;
+                  console.log(`loaded package : ${packageName}`);
+                  if (index === arr.length - 1) {
+                    resolve(bp);
+                  }
+                }
+              };
+              document.head.prepend(script);
+            }
+            if(util.fs.existsSync(targetCssFile)){
+              let css = document.createElement("link");
+              css.setAttribute("rel","stylesheet");
+              css.setAttribute("type","text/css");
+              css.setAttribute("href",targetLinkCssFile);
+              document.head.prepend(css);
+            }
+          });
         });
+      },
+      loadAppPackage : async function(){
+        let appPackage = await pm.listPackage();
+        console.log("-------- app package --------");
+        console.log(appPackage);
+        await this.buildPackageMenu(appPackage);
+        Vue.prototype.$global.packages = await this.loadPackage(appPackage);
+        Vue.prototype.$global.$emit("app-package-loaded");
+        console.log("emitting app-package-loaded");
+      },
+      reloadBoardPackage : async function() {
+        let boardName = this.$global.board.board;
+        //bm.clearListedBoard();
+        let boardPackage = await bm.packages(boardName);
+        console.log("--------- board package ---------");
+        console.log(boardPackage);
+        await this.buildPackageMenu(boardPackage);
+        Vue.prototype.$global.board.package = await this.loadPackage(boardPackage);
+        Vue.prototype.$global.$emit("board-package-loaded");
+        console.log("emitting board-package-loaded");
       },
       onResizePanel(pane, container, size) {
         this.$global.$emit("panel-resize", size);

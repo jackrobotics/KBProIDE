@@ -1,3 +1,6 @@
+//=== magic !!!
+import 'v8-compile-cache';
+//=============
 import Vue from "vue";
 import "./engine/plugins/vuetify";
 import App from "./App.vue";
@@ -6,6 +9,7 @@ import store from "./store";
 import "./registerServiceWorker";
 import "roboto-fontface/css/roboto/roboto-fontface.css";
 import "font-awesome/css/font-awesome.css";
+import 'material-design-icons-iconfont/dist/material-design-icons.css'
 
 import cm from "@/engine/ComponentManager";
 import bm from "@/engine/BoardManager";
@@ -21,23 +25,24 @@ import SmoothScrollbar from "vue-smooth-scrollbar";
 
 Vue.use(SmoothScrollbar);
 
-const fs = require("fs");
-
-//---- firebase database ----//
-//import firebase from 'firebase';
-//require('firebase/firestore');
-// Initialize Firebase
-var config = {
-  apiKey: "AIzaSyD8iU1-u0KFl7vFCJdwzJzAha7kOLtMKcQ",
-  authDomain: "kbproide.firebaseapp.com",
-  databaseURL: "https://kbproide.firebaseio.com",
-  projectId: "kbproide",
-  storageBucket: "kbproide.appspot.com",
-  messagingSenderId: "1046722656270"
-};
-firebase.initializeApp(config);
-Vue.prototype.$db = firebase.firestore();
-
+//const fs = require("fs");
+const { promises: fs } = require("fs");
+const checkFileExists = async path => !!(await fs.stat(path).catch(e => false));
+//========= directus ==========//
+const DirectusSDK = require('@directus/sdk-js');
+const directus_client = DirectusSDK({
+  url : "https://manage.kbide.org/",
+  project : "_",
+  storage: window.localStorage
+});
+const directus_dev_client = DirectusSDK({
+  url : "https://manage.kbide.org/",
+  project : "_",
+  token : "FB7AECD641C6981EC81498704BCECFAE"
+});
+Vue.prototype.$db_dev = directus_dev_client;
+Vue.prototype.$db2 = directus_client;
+//=============================//
 Vue.config.productionTip = false;
 //---- Google Analytic ----//
 const analytics = new Analytics("UA-140229781-1");
@@ -72,20 +77,12 @@ import VueTour from "vue-tour";
 Vue.use(VueTour);
 
 //---- load data to global variable ----//
-var componentAllData = {
+let componentAllData = {
   data: {},
   persistence: {}
 };
-var watcher = {};
-var watcherHandler = {};
-//---------------- first run -----------//
-const appVersion = require("electron").remote.app.getVersion();
-if (!fs.existsSync(util.baseDir + "/INSTALLED")) {
-  fs.writeFileSync(util.baseDir + "/INSTALLED", appVersion);
-  localStorage.clear();
-}
-//--------------------------------------//
-
+let watcher = {};
+let watcherHandler = {};
 let addWatcher = function(name, ghandler, deep) {
   if (global.config.persistence === "false") {
     console.log("persistence disabled");
@@ -104,7 +101,6 @@ let addWatcher = function(name, ghandler, deep) {
     deep: deep
   };
 };
-
 let parseConfig = function() {
   let params = global.location.hash && global.location.hash.split("?");
   let res = {};
@@ -121,120 +117,118 @@ let parseConfig = function() {
   }
   return res;
 };
-
-global.config = parseConfig();
-//========= component  manager =========//
-var comps = cm.listComponent();
-Object.keys(comps).forEach(function(key) {
-  if ("config" in comps[key]) {
-    let cmConfigData = util.loadCofigComponents(comps[key].config, key);
-    componentAllData.data[key] = cmConfigData.data;
-    componentAllData.persistence[key] = cmConfigData.persistence;
+const appVersion = require("electron").remote.app.getVersion();
+(async() => {
+  //---------------- first run -----------//
+  if(!await checkFileExists(util.baseDir + "/INSTALLED")){
+    await fs.writeFile(util.baseDir + "/INSTALLED", appVersion);
+    localStorage.clear();
   }
-});
-//=====================================//
-
-//=========== board manager ===========//
-var boards = bm.listBoard();
-var boardInfo = bm.loadBoardManagerConfig();
-var boardInfoComponent = util.loadCofigComponents(boardInfo, "board");
-if(!boardInfoComponent.data.dir){
-  boardInfoComponent.data.board_info.dir = `${util.boardDir}/${boardInfoComponent.data.board_info.name}`;
-}
-console.log(boardInfoComponent);
-// assign data to $global
-componentAllData.data["board"] = boardInfoComponent.data;
-componentAllData.persistence["board"] = boardInfoComponent.persistence;
-// load packages
-var boardPackage = bm.packages(boardInfoComponent.data.board);
-
-// assign package to board
-componentAllData.data["board"]["package"] = {};
-Object.keys(boardPackage).forEach(packageName => {
-  componentAllData.data.board.package[packageName] = {};
-  let boardPackageData = util.loadCofigComponents(
-    boardPackage[packageName].config,
-    "board.package." + packageName
-  );
-  componentAllData.data.board.package[packageName] = boardPackageData.data;
-  componentAllData.persistence["board.package." +
-  packageName] = boardPackageData.persistence;
-});
-
-addWatcher("board.board", function(val) { //listen board name change we need to reload everything
-  console.log("board changed to : " + val);
-  localStorage["board.board"] = JSON.stringify(val);
-}, false);
-
-//console.log(process.platform);
-//console.log(util.rootDir);
-
-//TODO load platform block
-
-//=====================================//
-
-//============= ui manager ============//
-var uiComponentData = util.loadCofigComponents(ui, "ui");
-componentAllData.data["ui"] = uiComponentData.data;
-componentAllData.persistence["ui"] = uiComponentData.persistence;
-//=====================================//
-
-//---- persistence data watcher ----//
-Object.keys(componentAllData.persistence).forEach(function(key) {
-  componentAllData.persistence[key].forEach(function(pkey) {
-    addWatcher(key + "." + pkey, function(val) {
-      localStorage[key + "." + pkey] = JSON.stringify(val);
-    }, true);
+  //--------------------------------------//
+  global.config = parseConfig();
+  //========= component  manager =========//
+  let comps = cm.listComponent();
+  Object.keys(comps).forEach(function(key) {
+    if ("config" in comps[key]) {
+      let cmConfigData = util.loadCofigComponents(comps[key].config, key);
+      componentAllData.data[key] = cmConfigData.data;
+      componentAllData.persistence[key] = cmConfigData.persistence;
+    }
   });
-});
-console.log("======> $global data <=====");
-console.log(componentAllData);
-console.log("===========================");
+  //=====================================//
 
-//---- setup $global ----//
-Vue.prototype.$global = new Vue({
-  data: componentAllData.data,
-  watch: watcher
-});
-
-//=========== load form config ==============//
-if (global.config.mode) {
-  global.config.mode = parseInt(global.config.mode);
-  Vue.prototype.$global.editor.mode = global.config.mode;
-}
-if (global.config.file && fs.existsSync(global.config.file)) {
-  let targetFile = global.config.file;
-  if (targetFile.endsWith(".bly")) {
-    let contentFile = fs.readFileSync(targetFile, "utf8");
-    Vue.prototype.$global.editor.blockCode = util.b64DecodeUnicode(contentFile);
-  } else if (global.config.file.endsWith(".ino")) {
-    Vue.prototype.$global.editor.sourceCode = fs.readFileSync(targetFile,
-      "utf8");
+  //=========== board manager ===========//
+  let boards = await bm.listBoard();
+  let boardInfo = await bm.loadBoardManagerConfig();
+  let boardInfoComponent = util.loadCofigComponents(boardInfo, "board");
+  if(!boardInfoComponent.data.dir){
+    boardInfoComponent.data.board_info.dir = `${util.boardDir}/${boardInfoComponent.data.board_info.name}`;
   }
-}
-if (global.config.persistence === "false") {
-  document.title += " << Example Mode :: this mode will not save persistence data >>";
-}
-//---- setup $engine ----//
-var engineData = {
-  util: util,
-  compiler: compiler,
-  componentManager: cm,
-  boardManager: bm,
-  platformManager: pfm,
-  uiManager: ui,
-  pluginManager: pm
-};
-Vue.prototype.$engine = new Vue({ data: engineData });
-//=======================================================//
-new Vue({
-  router,
-  store,
-  render: h => h(App)
-}).$mount("#app");
-//=======================================================//
+  // assign data to $global
+  componentAllData.data["board"] = boardInfoComponent.data;
+  componentAllData.persistence["board"] = boardInfoComponent.persistence;
+  // load packages
+  let boardPackage = await bm.packages(boardInfoComponent.data.board);
 
-var utils = require;
-const u = require("electron").remote.getGlobal("blockly_utils");
-u.blockly_utils = blockly_utils;
+  // assign package to board
+  componentAllData.data["board"]["package"] = {};
+  Object.keys(boardPackage).forEach(packageName => {
+    componentAllData.data.board.package[packageName] = {};
+    let boardPackageData = util.loadCofigComponents(
+      boardPackage[packageName].config,
+      "board.package." + packageName
+    );
+    componentAllData.data.board.package[packageName] = boardPackageData.data;
+    componentAllData.persistence["board.package." +
+    packageName] = boardPackageData.persistence;
+  });
 
+  addWatcher("board.board", function(val) { //listen board name change we need to reload everything
+    console.log("board changed to : " + val);
+    localStorage["board.board"] = JSON.stringify(val);
+  }, false);
+  //=====================================//
+
+  //============= ui manager ============//
+  let uiComponentData = util.loadCofigComponents(ui, "ui");
+  componentAllData.data["ui"] = uiComponentData.data;
+  componentAllData.persistence["ui"] = uiComponentData.persistence;
+  //=====================================//
+
+  //---- persistence data watcher ----//
+  Object.keys(componentAllData.persistence).forEach(function(key) {
+    componentAllData.persistence[key].forEach(function(pkey) {
+      addWatcher(key + "." + pkey, function(val) {
+        localStorage[key + "." + pkey] = JSON.stringify(val);
+      }, true);
+    });
+  });
+  console.log("======> $global data <=====");
+  console.log(componentAllData);
+  console.log("===========================");
+
+  //---- setup $global ----//
+  Vue.prototype.$global = new Vue({
+    data: componentAllData.data,
+    watch: watcher
+  });
+
+  //=========== load form config ==============//
+  if (global.config.mode) {
+    global.config.mode = parseInt(global.config.mode);
+    Vue.prototype.$global.editor.mode = global.config.mode;
+  }
+  if (global.config.file && await checkFileExists(global.config.file)) {
+    let targetFile = global.config.file;
+    if (targetFile.endsWith(".bly")) {
+      let contentFile = await fs.readFile(targetFile, "utf8");
+      Vue.prototype.$global.editor.blockCode = util.b64DecodeUnicode(contentFile);
+    } else if (global.config.file.endsWith(".ino")) {
+      Vue.prototype.$global.editor.sourceCode = await fs.readFile(targetFile, "utf8");
+    }
+  }
+  if (global.config.persistence === "false") {
+    document.title += " << Example Mode :: this mode will not save persistence data >>";
+  }
+  //---- setup $engine ----//
+  let engineData = {
+    util: util,
+    compiler: compiler,
+    componentManager: cm,
+    boardManager: bm,
+    platformManager: pfm,
+    uiManager: ui,
+    pluginManager: pm
+  };
+  Vue.prototype.$engine = new Vue({ data: ()=> engineData });
+
+  //=======================================================//
+  new Vue({
+    router,
+    store,
+    render: h => h(App)
+  }).$mount("#app");
+  //=======================================================//
+})().catch(err=>{
+  console.error(err);
+});

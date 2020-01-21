@@ -5,7 +5,6 @@ import {
   createProtocol,
   installVueDevtools
 } from "vue-cli-plugin-electron-builder/lib";
-
 const path = require("path");
 
 const isDevelopment = process.env.NODE_ENV !== "production";
@@ -90,9 +89,4 @@ ipcMain.on("update-restart", () => {
   app.exit(0);
 });
 //====== create menu =======//
-
-global.blockly_utils = {
-  blockly_utils: {}
-};
-
 require("./menu");

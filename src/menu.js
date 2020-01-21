@@ -1,3 +1,5 @@
+import Vue from "vue";
+
 const { app, Menu, shell, BrowserWindow } = require("electron");
 var isMac = process.platform === "darwin";
 const template = [
@@ -136,6 +138,13 @@ const template = [
         click: () => {
           BrowserWindow.getFocusedWindow().webContents.send("edit-replace");
         }
+      },
+      {
+        label: "Reformat Code",
+        accelerator: "CmdOrCtrl+Shift+F",
+        click: () => {
+          BrowserWindow.getFocusedWindow().webContents.send("clang-format");
+        }
       }
     ]
   },
@@ -152,6 +161,11 @@ const template = [
       { role: "zoomout" },
       { type: "separator" },
       { role: "togglefullscreen" }
+    ]
+  },
+  {
+    label: "Tools",
+    submenu: [
     ]
   },
   // { role: 'windowMenu' }

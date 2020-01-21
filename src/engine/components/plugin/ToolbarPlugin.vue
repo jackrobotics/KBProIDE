@@ -19,10 +19,67 @@
                             clearable
                             hide-details
                             :append-outer-icon="searchText ? 'fa-chevron-circle-right' : ''"
+                            @click:append-outer="listAllPlugins(searchText)"
+                            @click:clear="listAllPlugins()"
+                            @change="listAllPlugins(searchText)"
                             v-model="searchText"></v-text-field>
+                    <v-menu v-model="filter.menu" :close-on-content-click="false" :nudge-width="200" left>
+                        <v-btn slot="activator" icon>
+                            <v-icon>filter_list</v-icon>
+                        </v-btn>
+                        <v-card class="filter" max-width=350>
+                            <v-card-title class="subheading">Filter</v-card-title>
+                            <v-divider></v-divider>
+                            <v-card-text>
+                                <v-list-tile-content>
+                                    <v-list-tile-action>
+                                        <v-flex xs12 sm12 md12>
+                                            <v-combobox
+                                                    v-model="filter.order.sortby"
+                                                    :items="filter.order.init_orders"
+                                                    label="Sort by"
+                                            ></v-combobox>
+                                        </v-flex>
+                                    </v-list-tile-action>
+                                </v-list-tile-content>
+                                <v-divider></v-divider>
+                                <v-list-tile-content>
+                                    <v-list-tile-title>Categories</v-list-tile-title>
+                                    <div>
+                                        <v-btn flat small color="primary"
+                                               @click="filter.categories.selected = filter.categories.init_selected">select all
+                                        </v-btn>
+                                        <v-btn flat small color="primary"
+                                               @click="filter.categories.selected = []">select none
+                                        </v-btn>
+                                    </div>
+                                    <v-list-tile-action>
+                                        <v-item-group multiple v-model="filter.categories.selected">
+                                            <v-item v-for="(data,index) in filter.categories.name" :key="index">
+                                                <v-chip
+                                                        slot-scope="{active,toggle}"
+                                                        :selected="active"
+                                                        @click="toggle"
+                                                        :color="active ? 'primary' : ''"
+                                                        :text-color="active ? 'white' : ''"
+                                                >
+                                                    {{data}}
+                                                </v-chip>
+                                            </v-item>
+                                        </v-item-group>
+                                    </v-list-tile-action>
+                                </v-list-tile-content>
+                            </v-card-text>
+                            <v-card-actions>
+                                <v-spacer></v-spacer>
+                                <v-btn color="primary" flat @click="filter.menu = false">Cancel</v-btn>
+                                <v-btn color="primary" @click="applyFilter">Apply</v-btn>
+                            </v-card-actions>
+                        </v-card>
+                    </v-menu>
                 </v-card-title>
                 <v-divider></v-divider>
-                <smooth-scrollbar>
+                <smooth-scrollbar ref="scrollbar">
                     <v-card-text>
                         <v-subheader>
                             Installed
@@ -74,7 +131,7 @@
                                             <template v-else>
                                                 <v-btn
                                                         icon fab small dark
-                                                        class="red"
+                                                        class="green"
                                                         @click="updatePlugin(data.category.name)"
                                                 >
                                                     <v-icon>fa-retweet</v-icon>
@@ -139,6 +196,7 @@
                                                     @click="installOnlinePlugin(data.name)"
                                             >
                                                 <v-icon v-if="data.status === 'READY'">fa-download</v-icon>
+                                                <v-icon v-if="data.status === 'DRAFT'">fa-pause</v-icon>
                                                 <v-progress-circular
                                                         v-else-if="data.status !== 'READY'"
                                                         indeterminate
@@ -168,6 +226,9 @@
 </template>
 
 <script>
+  import SmoothScrollbar from "../../views/widgets/list/SmoothScrollbar";
+  import PluginPublishForm from "./PluginPublishForm";
+
   const { shell } = require("electron");
   const fs = require("fs");
   const request = require("request-promise");
@@ -178,6 +239,7 @@
   let mother = null;
 
   export default {
+    components: { SmoothScrollbar, PluginPublishForm },
     created: function() {
       window.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
@@ -191,6 +253,7 @@
     data() {
       return {
         pluginDialog: false,
+        publishPluginDialog: false,
         confirmRemoveDialog: false,
         confirmInstallDialog: false,
         searchText: "",
@@ -199,10 +262,37 @@
         installedPlugin: [],
         localPlugin: [],
         onlinePluginStatus: "wait",
-        onlinePluginPage: 0,
         onlinePlugin: [],
         statusText: "",
-        statusProgress: 0
+        statusProgress: 0,
+
+        filter: {
+          defaultLimit: 20,
+          currentPage: 1,
+          nextOffset: 0,
+          menu: false,
+          order: {
+            init_orders: ["Name", "Newest", "Popular", "Recommended"],
+            actual_value: { Name: "title", Newest: "-modified_on", Popular: "installed", Recommended: "rating" },
+            sortby: this.$global.plugin.sortby
+          },
+          categories: {
+            init_selected: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            selected: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            name: [
+              "Display",
+              "Communication",
+              "Signal Input/Output",
+              "Sensors",
+              "Device Control",
+              "Timing",
+              "Data Storage",
+              "Data Processing",
+              "Other",
+              "Uncategorized"
+            ]
+          }
+        }
       };
     },
     methods: {
@@ -222,41 +312,98 @@
       isOnline() {
         return window.navigator.onLine;
       },
+      onScroll(status) {
+        if (status.offset.y >= status.limit.y) {
+          console.log("load more plugins");
+          this.listOnlinePlugin(this.searchText, true);
+        }
+      },
       listAllPlugins(name = "") {
+        //let selected_categories = this.filter.categories.name.filter((el,ind) => this.filter.categories.selected.includes(ind));
         this.listOnlinePlugin(name);
         this.listLocalPlugin(name);
       },
-      listOnlinePlugin(name = "") {
-        this.onlinePluginStatus = "wait";
-        var boardInfo = this.$global.board.board_info;
-        pm.listOnlinePlugin(boardInfo, name).then(res => {
+      listOnlinePlugin(name = "", loadNext = false) {
+        this.onlinePluginStatus = (loadNext)
+          ? "OK"
+          : "wait";
+        let boardInfo = this.$global.board.board_info;
+        //------------//
+        let selected_categories = this.filter.categories.selected.map(el => this.filter.categories.name[el]);
+        let query = {
+          "limit": this.filter.defaultLimit,
+          "page": this.filter.currentPage,
+          "meta": "page",
+          "sort": this.filter.order.actual_value[this.filter.order.sortby],
+          filter: {
+            filter1: {
+              logical: "nest",
+              platform: { logical: "or", contains: boardInfo.platform },
+              board: { logical: "or", contains: boardInfo.name }
+            },
+            category: {
+              in: selected_categories
+            }
+          }
+        };
+        if (name !== "") {
+          query.filter.filter2 = {
+            logical: "nest",
+            title: { logical: "or", contains: name },
+            keywords: { logical: "or", contains: name }
+          };
+        }
+        if (loadNext) {
+          query.page = query.page + 1;
+          query.offset = this.filter.nextOffset;
+          if (this.filter.nextOffset == null) {
+            return;
+          }
+        }
+        //--------------//
+        pm.listOnlinePlugin(query).then(res => {
           //name,start return {end : lastVisible, plugins : onlinePlugins}
-          this.onlinePluginPage = res.end;
+          mother.filter.currentPage = res.meta.page;
+          mother.filter.nextOffset = res.meta.next_offset;
           let filtered = [];
           res.plugins.forEach(obj => {
             let f = mother.localPlugin.find(elm => {
-              let lc = elm.category.name.en?elm.category.name.en.toLowerCase() : elm.category.name.toLowerCase();
-              let rm = obj.name.en ? obj.name.en.toLowerCase() : obj.name.toLowerCase();
+              let lc = elm.category.name.en
+                ? elm.category.name.en.toLowerCase()
+                : elm.category.name.toLowerCase();
+              let rm = obj.name.en
+                ? obj.name.en.toLowerCase()
+                : obj.name.toLowerCase();
               return lc === rm;
             });
             if (f) {
-              if (obj.version > f.category.version) {
+              if (obj.version > f.category.version && obj.status !== "draft") {
                 f.status = "UPDATABLE";
                 f.nextVersion = obj.version;
               }
             } else {
-              obj.status = "READY";
+              obj.status = obj.status === "published"
+                ? "READY"
+                : (obj.status === "draft"
+                  ? "DRAFT"
+                  : "ERROR");
               filtered.push(obj);
             }
           });
-          mother.onlinePlugin = filtered;
-            //this.onlinePlugin = res.plugins.map(obj=>{ obj.status =  'READY'; return obj;});
+          if (loadNext) {
+            mother.onlinePlugin.push(...filtered);
+          } else {
+            mother.onlinePlugin = filtered;
+          }
+
+          //this.onlinePlugin = res.plugins.map(obj=>{ obj.status =  'READY'; return obj;});
           this.onlinePluginStatus = "OK";
         }).catch(err => {
           this.onlinePluginStatus = "ERROR";
         });
       },
       listLocalPlugin(name = "") {
+        console.log("find pluging = " + name);
         this.localPlugin = [];
         this.installedPlugin = pm.plugins(this.$global.board.board_info).map(obj => {
           obj.status = "READY";
@@ -264,11 +411,23 @@
         });
         if (name !== "") {
           this.localPlugin = this.installedPlugin.filter(obj => {
-            return obj.name.startsWith(name);
+            return obj.category.title.includes(name);
           });
+          this.localPlugin = this.localPlugin.concat(...this.installedPlugin.filter(obj => {
+            return (obj.category.keywords)
+              ? obj.category.keywords.includes(name)
+              : false;
+          }));
+
         } else {
           this.localPlugin = this.installedPlugin;
         }
+      },
+      applyFilter() {
+        this.filter.menu = false;
+        let sortby = this.filter.order.sortby;
+        this.$global.plugin.sortby = sortby;
+        this.listAllPlugins();
       },
       installOnlinePlugin(name) {
         let b = this.getOnlinePluginByName(name);
@@ -336,7 +495,7 @@
         if (res === true) {
           let p = this.getPluginByName(name);
           let st = p.status;
-          pm.backupPlugin(p.category).then(() => {
+          pm.backupPlugin(p).then(() => {
             console.log("update plugin : " + name);
             p.status = "DOWNLOAD";
             this.statusText = "Downloading";
@@ -360,7 +519,7 @@
             //install success
             p.status = "READY";
             this.statusText = "";
-            pm.removePlugin(p.category, true).then(() => {
+            pm.removePlugin(p, true).then(() => {
               this.$dialog.notify.info("Update plugin success");
               this.listAllPlugins();
               setTimeout(() => {
@@ -380,26 +539,26 @@
               p.status = st;
               this.statusText = "";
             }, 5000);
-            pm.restorePlugin(p.category).then(() => {});
+            pm.restorePlugin(p).then(() => {});
           });
         }
       },
       publishNewPlugin: async function() {
         let res = await this.$dialog.prompt({
           text: "https://github.com/user/repo/",
-          title: "Input Board Repository"
+          title: "Input Plugin Repository"
         });
-        if (res === false){ // user cancel
+        if (res === false) { // user cancel
           return;
         }
         this.$dialog.notify.info("Please wait...");
-        if(!res.endsWith("/")){ res += "/"; }
-        pm.publishPlugin(res).then(_=>{
+        if (!res.endsWith("/")) { res += "/"; }
+        pm.publishPlugin(res).then(_ => {
           this.$dialog.notify.success("submit your plugin success, please refresh again");
-        }).catch(err=>{
-          if(typeof err === "string"){
+        }).catch(err => {
+          if (typeof err === "string") {
             this.$dialog.notify.error(err);
-          }else{
+          } else {
             this.$dialog.notify.error("Error something went wrong, please check the log");
           }
           console.log("publish plugin error -----");
@@ -410,12 +569,23 @@
     mounted() {
       //console.log(this.localPlugin);
       mother = this;
+      if (this.$refs.scrollbar) {
+        this.$refs.scrollbar.scrollbar.addListener(this.onScroll);
+      }
     },
-    destroyed() {},
+    destroyed() {
+      if (this.$refs.scrollbar) {
+        this.$refs.scrollbar.scrollbar.removeListener(this.onScroll);
+      }
+    },
     watch: {
       pluginDialog: function(val) {
         if (val) {
           //on opening
+          this.searchText = "";
+          this.filter.categories.selected = this.filter.categories.init_selected;
+          this.filter.nextOffset = 0;
+          this.filter.currentPage = 1;
           this.listAllPlugins();
         }
       }

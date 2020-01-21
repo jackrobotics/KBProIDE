@@ -1,15 +1,15 @@
 <template>
     <div>
         <v-tooltip bottom>
-            <v-btn color="primary darken-2" slot="activator" icon @click="modeDialog = !modeDialog">
+            <v-btn color="primary darken-2" slot="activator" icon @click="onChangeModeDialog">
                 <v-icon dark>fa-users</v-icon>
             </v-btn>
-            <span>User Level</span>
+            <span>Programming Mode</span>
         </v-tooltip>
         <v-dialog v-model="modeDialog" max-width="800px" persistent>
             <v-card>
                 <v-card-title>
-                    <span class="headline">Select programming level</span>
+                    <span class="headline">Select programming mode</span>
                 </v-card-title>
                 <v-divider></v-divider>
                 <v-card-text>
@@ -99,28 +99,28 @@
         selectingMode: this.$global.editor.mode,
         modes: [
           {
-            name: "Kid Level",
+            name: "Block programming",
             desc: "Easy programming with blocks",
             icon: {
-              src: "/static/icons/kid.png",
+              src: "/static/icons/jigsaw_128_wbg.png",
               size: "96"
             },
             mode: 1
           },
           {
-            name: "Student Level",
+            name: "Dual mode (Block & C/C++)",
             desc: "Learning convert block to code",
             icon: {
-              src: "/static/icons/nerd.png",
+              src: "/static/icons/dual2_128_wbg.png",
               size: "96"
             },
             mode: 2
           },
           {
-            name: "Programmer Level",
-            desc: "Coding with pure editor",
+            name: "Text-based programming",
+            desc: "Coding with C/C++ language",
             icon: {
-              src: "/static/icons/programmer.png",
+              src: "/static/icons/source-code2_128_wbg.png",
               size: "96"
             },
             mode: 3
@@ -131,11 +131,29 @@
     },
     computed: {},
     methods: {
+      onChangeModeDialog() {
+
+        if (this.$global.editor.rollbackMode !== 0) {
+          this.$store.dispatch("rawCodeMode", false);
+          this.$global.editor.rawCodeMode = false;
+          this.$global.editor.mode = this.$global.editor.rollbackMode;
+          this.$global.$emit("editor-mode-change", this.$global.editor.rollbackMode);
+          this.$global.editor.rollbackMode = 0;
+        }
+
+        this.modeDialog = !this.modeDialog;
+      }
+      ,
       changeEditorMode: async function(mode) {
         console.log("editor change mode to : " + mode);
         this.modeDialog = false;
-        if (mode >= 3) { // we ask a convert
-          const res = await this.$dialog.confirm({
+        if (mode >= 3) {
+
+          /* Monaco config */
+          this.$global.editor.editor_options.readOnly = false;
+
+          // we ask a convert
+          /*const res = await this.$dialog.confirm({
             text: "Do you want to clear and convert block to source code?",
             title: "Warning",
             actions: [
@@ -143,8 +161,8 @@
               { text: "Just switch", key: true },
               { text: "Cancel", key: false, color: "red darken-1" }
             ]
-          });
-
+          });*/
+          let res = true; //force just switch
           if (res === "convert") { //convert from block
             this.$global.editor.mode = mode;
             this.$nextTick(function() { //wait for element changed before fire event
@@ -157,6 +175,10 @@
             });
           }
         } else {
+
+          /* Monaco config */
+          this.$global.editor.editor_options.readOnly = true;
+
           /*const res = await this.$dialog.confirm({
               text: 'Switching to block mode will lose this code.',
               title: 'Warning',

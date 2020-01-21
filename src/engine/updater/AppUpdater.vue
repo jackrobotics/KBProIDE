@@ -17,7 +17,7 @@
                                 :indeterminate="updateValue < 0"
                                 color="teal"
                         >
-                            {{ updateValue }} %
+                            {{ (updateValue > 0)? (updateValue + "%") : "" }}
                         </v-progress-circular>
                     </div>
                     <div class="text-xs-center mt-4">
@@ -30,14 +30,14 @@
                     </div>
                 </template>
                 <template v-else>
-                    <p v-html="update.info"></p>
+                    <p v-html="update.description"></p>
                 </template>
             </v-card-text>
             <v-card-actions v-if="updateStatus !== 'UPDATING'">
                 <v-spacer></v-spacer>
                 <v-tooltip top>
                     <template v-slot:activator="{ on }">
-                        <v-btn color="blue darken-1" flat v-on="on" @click="ignoreUpdate(update.type,update.version)">
+                        <v-btn color="blue darken-1" flat v-on="on" @click="ignoreUpdate(update.id)">
                             Ignore this version
                         </v-btn>
                     </template>
@@ -70,6 +70,7 @@
         update: {
           info: "",
           version: "",
+          id : -1
         },
         updateStatus: "IDLE",
         updateValue: 0,
@@ -91,132 +92,150 @@
         return window.navigator.onLine;
       },
       checkUpdate(showNotification = false, forceShowUpdate = false) {
-        return new Promise((resolve, reject) => {
-          mother.$db.collection("apps").orderBy("date", "desc").limit(1).get().then(appData => {
-            if (appData.size >= 1) {
-              let data = appData.docs[0].data();
-              mother.update = data;
-              mother.update.type = "app";
+        return new Promise((resolve,reject)=> {
+          let query = {
+            limit : 1,
+            "sort" : "-release_date"
+          };
+          Vue.prototype.$db2.getItems("version", query).then((res) => {
+            if(res && res.data && res.data.length === 1 && res.data[0].status === "published"){
+              let data = res.data[0];
               let arch = require('os').arch();
               if (process.platform === "win32" && arch === "ia32") {
-                data.asar =  data.asar + "-win32.zip";
+                data.zip =  data.zip + "-win32.zip";
               }else if(process.platform === "win32" && arch === "x64"){
-                data.asar =  data.asar + "-win64.zip";
+                data.zip =  data.zip + "-win64.zip";
               }else if (process.platform === "darwin") {
-                data.asar = data.asar + "-darwin.zip";
+                data.zip = data.zip + "-darwin.zip";
               } else if (process.platform === "linux") {
-                data.asar = data.asar + "-linux.zip";
+                if(arch.startsWith("armv7")){
+                  data.zip = data.zip + "-linux-armv7.zip";
+                }else if(arch.startsWith("arm64")){
+                  data.zip = data.zip + "-linux-arm64.zip";
+                }else{
+                  data.zip = data.zip + "-linux.zip";
+                }
               }
-              EAU.init({
-                         server: false, // Where to check. true: server side, false: client side, default: true.
-                         debug: false, // Default: false.
-                       });
+              mother.update = data;
+              console.log("checking new update ==>");
+              console.log(data);
 
-              EAU.process(data, function(error, last, body) {
-                if (!error) {
-                  if (
-                      mother.$global.setting.ignoreUpdateVersion === last &&
-                      forceShowUpdate === false
-                  ) {
-                    console.log("User ignored update popup");
-                    resolve(false);
-                    return false;
-                  }
-                  mother.updateDialog = true;
-                  resolve(true);
-                  return true;
-                } else if (error === "no_update_available") {
+              EAU.init({
+                server: false, // Where to check. true: server side, false: client side, default: true.
+                debug: false, // Default: false.
+              });
+              if(data.type.length === 1 && data.type[0] === "platform"){
+                //single platform update, let check
+                let havePlatform = fs.readdirSync(util.platformDir);
+                if(!havePlatform.includes(data.name)) {//found target platform
+                  return resolve("no target platform");
+                }
+                let platformInfoFile = `${util.platformDir}/${data.name}/config.js`;
+                if (!fs.existsSync(platformInfoFile)) {
+                  return resolve("Target platform no config file");
+                }
+                if (mother.$global.setting.ignoreUpdateVersionID === data.id && forceShowUpdate === false){
+                  console.log("User ignored update popup");
+                  return resolve(false);
+                }
+                let currentPlatformInfo = eval(fs.readFileSync(platformInfoFile, "utf8"));
+                if (data.version <= currentPlatformInfo.version) {
                   if (showNotification) {
                     mother.$dialog.notify.info("This is newest version");
                   }
-                  resolve(false);
-                  return false;
-                } else {
-                  mother.$dialog.notify.error("check version error : " + error);
-                  resolve(false);
-                  return false;
+                  return resolve(false); // no
                 }
-              });
-            }
-          });
-        }).then(res => {
-          if (!res) { //apps already ignored or updated
-            mother.$db.collection("platforms").
-            where("platform", "==", mother.$global.board.board_info.platform).
-            orderBy("date", "desc").
-            limit(1).
-            get().
-            then(appData => {
-              if (appData.size >= 1) {
-                let data = appData.docs[0].data();
-                mother.update = data;
-                mother.update.type = "platform";
-                Updater.init(mother.update);
-                let pinfoFile = `${util.platformDir}/${mother.$global.board.board_info.platform}/config.js`;
-                if (!fs.existsSync(pinfoFile)) {
-                  return;
-                }
-                let currentPlatformInfo = eval(fs.readFileSync(pinfoFile, "utf8"));
-                if (mother.update.platform !== mother.$global.board.board_info.platform) {
-                  return;
-                }
-                if (mother.update.version <= currentPlatformInfo.version) {
-                  return;
-                }
-                if (mother.$global.setting.ignorePlatformVersion === mother.update.version && forceShowUpdate ===
-                    false) {
-                  console.log("User ignored this platform update popup");
-                  return;
-                }
+                EAU.update = { last: data.version, info : data, source : data.zip };
                 mother.updateDialog = true;
+                return resolve(true);
+              }else if(data.type.includes("app")) {
+                EAU.process(data, function(error, last, body) {
+                  if (!error) {
+                    if (
+                      mother.$global.setting.ignoreUpdateVersionID === last &&
+                      forceShowUpdate === false
+                    ) {
+                      console.log("User ignored update popup");
+                      return resolve(false);
+                    }
+                    mother.updateDialog = true;
+                    return resolve(true);
+                  } else if (error === "no_update_available") {
+                    if (showNotification) {
+                      mother.$dialog.notify.info("This is newest version");
+                    }
+                    return resolve(false);
+                  } else {
+                    mother.$dialog.notify.error("check version error : " + error);
+                    return resolve(false);
+                  }
+                });
               }
-            });
-          }
+            }
+          }).catch(err => {
+            console.error("list online board error : " + err);
+            reject(err);
+          });
         });
       },
-      ignoreUpdate(type, version) {
-        if (type === "app") {
-          mother.$global.setting.ignoreUpdateVersion = version;
-          //--tracking--//
-          mother.$track.event("update", "ignore",
+      ignoreUpdate(version) {
+        mother.$global.setting.ignoreUpdateVersionID = version;
+        //--tracking--//
+        mother.$track.event("update", "ignore",
                             {evLabel: "app_version_" + version, evValue: 1, clientID: mother.$track.clientID})
                     .catch(err=>{ console.log(err)});
-        } else if (type === "platform") {
-          mother.$global.setting.ignorePlatformVersion = version;
-          //--tracking--//
-          mother.$track.event("update", "ignore", {
-            evLabel: "platform_" + mother.update.platform + "_version_" + version,
-            evValue: 1,
-            clientID: mother.$track.clientID,
-          }).catch(err=>{ console.log(err)});
-        } else if (type === "board") {
-          //not support yet!
-        }
         mother.updateDialog = false;
       },
       updateApp() {
         mother.updateStatus = "UPDATING";
         mother.updateText = "Downloading ... ";
         //======== app update ========//
-        if (mother.update.type === "app") {
-          EAU.progress(mother.progress);
-          EAU.download(function(error) {
-            if (error) {
-              console.log("update app error : " + error);
-              mother.errorAndReset(error);
-              return false;
+        let extractPath = util.baseDir;
+        EAU.progress(mother.progress);
+        EAU.registerUnzipCallback(mother.onUnzip);
+        EAU.download(extractPath, function(error) {
+          mother.updateValue = 100;
+          if (error) {
+            console.log("update app error : " + error);
+            mother.errorAndReset(error);
+            return false;
+          }
+          if (fs.existsSync(util.baseDir + "/migrate.js")){
+            mother.updateText = "Migrating to new version ...";
+            let mgFile = util.baseDir + "/migrate.js";
+            let mg = util.requireFunc(mgFile);
+            if("migrate" in mg){
+              mg.migrate();
             }
-            console.log("Update success");
+          }else{
+            console.log("not found migrate file.");
+          }
+          console.log("Update success");
+          if(mother.update.type.includes("app")){ // app need to be restarted
             mother.updateText = "Restarting ...";
             setTimeout(() => {
               electron.remote.app.relaunch();
               electron.remote.app.exit(0);
             }, 2000);
-            //--tracking--//
-            mother.$track.event("update", "success",
-                              {evLabel: "app_" + mother.update.version, evValue: 1, clientID: mother.$track.clientID})
-                        .catch(err=>{ console.log(err)});
-          });
+          }else{                                  // others type just reload
+            let timeout = 6;
+            let reloader = function(){
+              timeout--;
+              mother.updateText = "Reloading in "+timeout+" second(s) ...";
+              if(timeout < 0){
+                document.location.reload();
+              }else{
+                setTimeout(()=> reloader(timeout),1000);
+              }
+            };
+            reloader(timeout);
+          }
+          //--tracking--//
+          mother.$track.event("update", "success",
+                            {evLabel: "app_" + mother.update.version, evValue: 1, clientID: mother.$track.clientID})
+                      .catch(err=>{ console.log(err)});
+        });
+        /*
         } else if (mother.update.type === "platform") {
           Updater.progress(mother.progress);
           //let currentPlatformDir = `${util.platformDir}/${mother.$global.board.board_info.platform}`;
@@ -245,6 +264,8 @@
             return false;
           });
         }
+        */
+
       },
       progress(state) {
         if (state.size.total) {
@@ -257,8 +278,12 @@
         } else {
           mother.updateText = `Downloading ${util.humanFileSize(
               state.size.transferred,
-          )} , speed : ${util.humanFileSize(speed)}/s`;
+          )} , speed : ${util.humanFileSize(state.speed)}/s`;
         }
+      },
+      onUnzip(file){
+        mother.updateText = "Unzip ... Please wait";
+        mother.updateValue = -1;
       },
       errorAndReset(error) {
         mother.updateStatus = "ERROR";
@@ -269,7 +294,7 @@
       },
     },
     watch: {
-      
+
     },
   };
 </script>
